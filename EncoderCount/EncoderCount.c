@@ -19,10 +19,9 @@ void turn_left_correction(int32_t counts);
 
 #define POSITION_TOLERANCE 10
 #define ANGULAR_CORRECTION_SPEED 1200
-// Degrees the turn usually falls short by; 0 disables the correction.
 #define TURN_CORRECTION_DEGREES 3
 #define COUNTS_PER_METER 8535
-#define COUNTS_PER_90_DEGREES 640 //631
+#define COUNTS_PER_90_DEGREES 631
 #define BASE_SPEED 2500
 #define TURN_SPEED 1500
 #define KP 8
@@ -43,25 +42,14 @@ int main(void) {
 
   for (int side = 0; side < 4; side++) {
     printf("Side %d\n", side + 1);
-    /*
-     * Travel one meter.
-     */
-    printf("[main] calling drive_with_correction\n");
     drive_with_correction(COUNTS_PER_METER);
-    printf("[main] Straight completed\n");
-    /*
-     * Rotate 90 degrees clockwise.
-     */
-    printf("[main] calling turn_right_90\n");
+    printf("Straight completed\n");
     turn_right_90(COUNTS_PER_90_DEGREES);
-    printf("[main] turn_right_90 returned\n");
     if (TURN_CORRECTION_DEGREES > 0) {
-      printf("[main] calling turn_right_correction\n");
       turn_right_correction(angle_to_counts(TURN_CORRECTION_DEGREES));
-      printf("[main] turn_right_correction returned\n");
       sleep_ms(300);
     }
-    printf("[main] Turn completed\n");
+    printf("Turn completed\n");
   }
   motors_set_speeds(0, 0);
   printf("Square completed.\n");
@@ -95,7 +83,6 @@ void drive_straight(int32_t target_counts) {
     sleep_ms(5);
   }
   motors_set_speeds(0, 0);
-  printf("[drive_straight] stopped, settling 300 ms\n");
   sleep_ms(300);
 }
 
@@ -105,16 +92,11 @@ void drive_with_correction(int32_t target_counts) {
   int32_t left, right;
   encoder_get_counts(&left, &right);
   int32_t position = (left + right) / 2;
-  printf("[drive_with_correction] after drive_straight: position=%ld\n",
-         (long)position);
 
   while (true) {
     int32_t difference = target_counts - position;
-    printf("[drive_with_correction] position=%ld difference=%ld\n",
-           (long)position, (long)difference);
 
     if (abs(difference) <= POSITION_TOLERANCE) {
-      printf("[drive_with_correction] within tolerance\n");
       break;
     }
 
@@ -125,8 +107,6 @@ void drive_with_correction(int32_t target_counts) {
     }
     sleep_ms(300);
     encoder_get_counts(&left, &right);
-    printf("[drive_with_correction] correction moved left=%ld right=%ld\n",
-           (long)left, (long)right);
     position += (left + right) / 2;
   }
   motors_set_speeds(0, 0);
@@ -148,7 +128,6 @@ void turn_right_90(int32_t target_counts) {
     sleep_ms(5);
   }
   motors_set_speeds(0, 0);
-  printf("[turn_right_90] stopped, settling 300 ms\n");
   sleep_ms(300);
 }
 
@@ -189,71 +168,49 @@ int32_t clamp(int32_t value, int32_t min, int32_t max) {
 }
 
 void move_forward_correction(int32_t counts) {
-  printf("[move_forward_correction] start, counts=%ld\n", (long)counts);
   encoder_reset();
-  int iter = 0;
   while (true) {
     int32_t left, right;
     encoder_get_counts(&left, &right);
     int32_t average = (left + right) / 2;
-    if (iter % 20 == 0)
-      printf("[move_forward_correction] average=%ld / %ld\n", (long)average,
-             (long)counts);
     if (average >= counts)
       break;
     motors_set_speeds(700, 700);
     sleep_ms(5);
-    iter++;
   }
   motors_set_speeds(0, 0);
-  printf("[move_forward_correction] done\n");
 }
 
 void move_backward_correction(int32_t counts) {
-  printf("[move_backward_correction] start, counts=%ld\n", (long)counts);
   encoder_reset();
-  int iter = 0;
   while (true) {
     int32_t left, right;
     encoder_get_counts(&left, &right);
     int32_t average = (left + right) / 2;
-    if (iter % 20 == 0)
-      printf("[move_backward_correction] average=%ld / %ld\n", (long)average,
-             (long)-counts);
     if (average <= -counts)
       break;
     motors_set_speeds(-700, -700);
     sleep_ms(5);
-    iter++;
   }
   motors_set_speeds(0, 0);
-  printf("[move_backward_correction] done\n");
 }
 
-// Counts needed to turn the given number of degrees (rounded).
 int32_t angle_to_counts(int32_t degrees) {
   return (COUNTS_PER_90_DEGREES * degrees + 45) / 90;
 }
 
 void turn_right_correction(int32_t counts) {
-  printf("[turn_right_correction] start, counts=%ld\n", (long)counts);
   encoder_reset();
-  int iter = 0;
   while (true) {
     int32_t left, right;
     encoder_get_counts(&left, &right);
     int32_t rotation = (abs(left) + abs(right)) / 2;
-    if (iter % 20 == 0)
-      printf("[turn_right_correction] left=%ld right=%ld rotation=%ld / %ld\n",
-             (long)left, (long)right, (long)rotation, (long)counts);
     if (rotation >= counts)
       break;
     motors_set_speeds(ANGULAR_CORRECTION_SPEED, -ANGULAR_CORRECTION_SPEED);
     sleep_ms(5);
-    iter++;
   }
   motors_set_speeds(0, 0);
-  printf("[turn_right_correction] done\n");
 }
 
 void turn_left_correction(int32_t counts) {
