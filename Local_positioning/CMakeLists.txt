@@ -35,14 +35,14 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Local_positioning Local_positioning.c )
+add_executable(Local_positioning main.c )
 
 pico_set_program_name(Local_positioning "Local_positioning")
 pico_set_program_version(Local_positioning "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(Local_positioning 0)
-pico_enable_stdio_usb(Local_positioning 0)
+pico_enable_stdio_usb(Local_positioning 1)
 
 # Add the standard library to the build
 target_link_libraries(Local_positioning
@@ -54,8 +54,8 @@ target_include_directories(Local_positioning PRIVATE
 )
 
 # Add any user requested libraries
-target_link_libraries(Local_positioning 
-        
+target_link_libraries(Local_positioning
+        pico_cyw43_arch_lwip_poll
         )
 
 pico_add_extra_outputs(Local_positioning)

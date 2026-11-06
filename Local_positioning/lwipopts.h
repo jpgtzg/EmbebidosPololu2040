@@ -71,4 +71,4 @@
 #define SLIP_DEBUG              	LWIP_DBG_OFF
 #define DHCP_DEBUG              	LWIP_DBG_OFF
  
-#endif /* _LWIPOPTS_H *
+#endif /* _LWIPOPTS_H */
