@@ -27,7 +27,6 @@ set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
-
 project(Pico2wCAN C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
@@ -35,32 +34,23 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Pico2wCAN Pico2wCAN.c )
+add_executable(Pico2wCAN main.c mcp2515.c)
 
 pico_set_program_name(Pico2wCAN "Pico2wCAN")
 pico_set_program_version(Pico2wCAN "0.1")
 
-# Generate PIO header
-pico_generate_pio_header(Pico2wCAN ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
-
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(Pico2wCAN 0)
-pico_enable_stdio_usb(Pico2wCAN 0)
+pico_enable_stdio_usb(Pico2wCAN 1)
 
 # Add the standard library to the build
 target_link_libraries(Pico2wCAN
-        pico_stdlib)
+        pico_stdlib
+        hardware_spi)
 
 # Add the standard include files to the build
 target_include_directories(Pico2wCAN PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
-
-# Add any user requested libraries
-target_link_libraries(Pico2wCAN 
-        hardware_pio
-        
-        )
-
+#target_compile_options(Pico2wCAN PRIVATE -Wall -Wextra)
 pico_add_extra_outputs(Pico2wCAN)
-
