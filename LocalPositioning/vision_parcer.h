@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+
 #define MAX_MARKERS 8
 
 typedef struct {

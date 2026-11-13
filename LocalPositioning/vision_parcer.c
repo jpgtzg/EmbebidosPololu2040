@@ -1,4 +1,6 @@
 #include "vision_parcer.h"
+#include <stdlib.h>
+#include <string.h>
 
 static bool is_key(const char *json, const jsmntok_t *token, const char *key) {
   int token_length = token->end - token->start;
