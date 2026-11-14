@@ -1,9 +1,16 @@
-// Construccion de la ruta a partir de los waypoints y control de seguimiento (pure pursuit).
+// Construccion de la ruta a partir de los waypoints, perfil de velocidad y control de
+// seguimiento (pure pursuit con giro anticipado por curvatura).
 #include <math.h>
 #include "path.h"
 
 #define D2R 0.01745329252f
 #define R2D 57.2957795f
+
+#define ARC_SEG_MAX_CM  12.0f   // segmentos mas largos se consideran recta
+#define END_MIN_SPEED   500
+#define END_BRAKE_PER_CM 60.0f
+#define PRED_ALPHA      0.5f
+#define PRED_MAX_MS     300.0f
 
 static float wrap180(float a) {
     while (a > 180.0f)   a -= 360.0f;
@@ -52,10 +59,31 @@ static void add_turn(path_t *P, const waypoint_t *E, const waypoint_t *X) {
     add(P, X->x_cm, X->y_cm);
 }
 
+// Curvatura con signo de cada segmento (1/cm), a partir del cambio de rumbo en sus vertices.
+static void finalize(path_t *P, float finish_cm) {
+    P->seg = 0; P->done = false; P->finish_cm = finish_cm; P->v_cmd = CURVE_SPEED * 0.5f;
+
+    static float vk[PATH_MAX_POINTS];
+    for (int j = 0; j < PATH_MAX_POINTS; j++) vk[j] = 0.0f;
+    for (int j = 1; j < P->n - 1; j++) {
+        float ax = P->p[j].x - P->p[j - 1].x, ay = P->p[j].y - P->p[j - 1].y;
+        float bx = P->p[j + 1].x - P->p[j].x, by = P->p[j + 1].y - P->p[j].y;
+        float la = hypotf(ax, ay), lb = hypotf(bx, by);
+        if (la < 1e-3f || lb < 1e-3f) continue;
+        float da = wrap180((atan2f(by, bx) - atan2f(ay, ax)) * R2D);
+        vk[j] = da * D2R / (la < lb ? la : lb);
+    }
+    for (int s = 0; s < PATH_MAX_POINTS; s++) P->seg_kappa[s] = 0.0f;
+    for (int s = 0; s < P->n - 1; s++) {
+        float len = hypotf(P->p[s + 1].x - P->p[s].x, P->p[s + 1].y - P->p[s].y);
+        P->seg_kappa[s] = len > ARC_SEG_MAX_CM ? 0.0f : 0.5f * (vk[s] + vk[s + 1]);
+    }
+}
+
 void path_build(path_t *P) { path_build_from(P, WP_START_IDX); }
 
 void path_build_from(path_t *P, int from) {
-    P->n = 0; P->seg = 0; P->done = false;
+    P->n = 0;
     int i = from;
     while (i < WP_COUNT) {
         const waypoint_t *w = &WAYPOINTS[i];
@@ -69,6 +97,14 @@ void path_build_from(path_t *P, int from) {
         i++;
     }
     add(P, WAYPOINTS[WP_FINAL_IDX].x_cm, WAYPOINTS[WP_FINAL_IDX].y_cm);
+    finalize(P, FINISH_RADIUS_CM);
+}
+
+void path_build_line(path_t *P, float x0, float y0, float x1, float y1) {
+    P->n = 0;
+    add(P, x0, y0);
+    add(P, x1, y1);
+    finalize(P, LINE_FINISH_CM);
 }
 
 int path_nearest_wp(const pose_t *pose, float *dist_cm) {
@@ -116,28 +152,83 @@ void path_follow(path_t *P, const pose_t *pose, drive_cmd_t *out) {
     out->xtrack_cm = hypotf(px - cur.x, py - cur.y);
 
     // Inicio y final coinciden en P1: solo cuenta como llegada en los ultimos segmentos.
-    if (P->seg >= P->n - 4 && out->dist_end_cm < FINISH_RADIUS_CM) P->done = true;
-    if (P->done) { out->left = out->right = 0; out->err_deg = 0; return; }
+    bool final_region = P->seg >= P->n - 4;
+    if (final_region && out->dist_end_cm < P->finish_cm) P->done = true;
+    if (P->done) { out->left = out->right = 0; out->err_deg = 0; out->speed = 0; return; }
 
+    // Punto objetivo: LOOKAHEAD_CM adelante sobre la ruta.
     float rem = LOOKAHEAD_CM;
-    pt_t target = cur;
+    pt_t target = cur, c = cur;
+    int tseg = P->seg;
     for (int s = P->seg; s < P->n - 1; s++) {
+        tseg = s;
         pt_t b = P->p[s + 1];
-        float d = hypotf(b.x - cur.x, b.y - cur.y);
+        float d = hypotf(b.x - c.x, b.y - c.y);
         if (d >= rem && d > 1e-6f) {
-            target.x = cur.x + (b.x - cur.x) * rem / d;
-            target.y = cur.y + (b.y - cur.y) * rem / d;
+            target.x = c.x + (b.x - c.x) * rem / d;
+            target.y = c.y + (b.y - c.y) * rem / d;
             break;
         }
-        rem -= d; cur = b; target = b;
+        rem -= d; c = b; target = b;
     }
+
+    // Velocidad: rapido en rectas, lento si hay una curva dentro de BRAKE_DIST_CM.
+    float kmax = 0.0f, walked = 0.0f;
+    pt_t w = cur;
+    for (int s = P->seg; s < P->n - 1 && walked < BRAKE_DIST_CM; s++) {
+        float k = fabsf(P->seg_kappa[s]);
+        if (k > kmax) kmax = k;
+        walked += hypotf(P->p[s + 1].x - w.x, P->p[s + 1].y - w.y);
+        w = P->p[s + 1];
+    }
+    float f = 1.0f - kmax / KAPPA_REF;
+    if (f < 0.0f) f = 0.0f;
+    if (f > 1.0f) f = 1.0f;
+    float v = CURVE_SPEED + (STRAIGHT_SPEED - CURVE_SPEED) * f;
 
     float bearing = atan2f(target.y - py, target.x - px) * R2D;
     float e = wrap180(bearing - pose->theta_deg);
     float ae = fabsf(e); if (ae > TURN_SLOW_DEG) ae = TURN_SLOW_DEG;
-    float v = BASE_SPEED * (1.0f - 0.5f * ae / TURN_SLOW_DEG);
-    float k = KP_TURN * e;
+    v *= 1.0f - 0.5f * ae / TURN_SLOW_DEG;
+
+    if (final_region) {
+        float vend = END_MIN_SPEED + END_BRAKE_PER_CM * out->dist_end_cm;
+        if (v > vend) v = vend;
+    }
+    if (v > P->v_cmd + ACCEL_STEP) v = P->v_cmd + ACCEL_STEP;
+    P->v_cmd = v;
+
+    // Giro anticipado: diferencia de ruedas que da la curvatura del tramo objetivo.
+    float ff = FF_GAIN * P->seg_kappa[tseg] * TRACK_CM * v * 0.5f;
+    float k = KP_TURN * e + ff;
     out->left  = clamp_speed(v - k);
     out->right = clamp_speed(v + k);
     out->err_deg = e;
+    out->speed = v;
+}
+
+void pred_reset(pred_t *q) { q->have = false; q->vx = q->vy = q->w = 0.0f; }
+
+void pred_update(pred_t *q, const pose_t *pose, uint32_t t_ms) {
+    if (q->have) {
+        float dt = (float)(t_ms - q->t_ms) / 1000.0f;
+        if (dt > 0.02f && dt < 0.5f) {
+            q->vx = PRED_ALPHA * ((pose->x_cm - q->x) / dt) + (1.0f - PRED_ALPHA) * q->vx;
+            q->vy = PRED_ALPHA * ((pose->y_cm - q->y) / dt) + (1.0f - PRED_ALPHA) * q->vy;
+            q->w  = PRED_ALPHA * (wrap180(pose->theta_deg - q->th) / dt) + (1.0f - PRED_ALPHA) * q->w;
+        } else {
+            q->vx = q->vy = q->w = 0.0f;
+        }
+    }
+    q->x = pose->x_cm; q->y = pose->y_cm; q->th = pose->theta_deg;
+    q->t_ms = t_ms; q->have = true;
+}
+
+void pred_apply(const pred_t *q, const pose_t *pose, float horizon_ms, pose_t *out) {
+    if (horizon_ms < 0.0f) horizon_ms = 0.0f;
+    if (horizon_ms > PRED_MAX_MS) horizon_ms = PRED_MAX_MS;
+    float h = horizon_ms / 1000.0f;
+    out->x_cm = pose->x_cm + q->vx * h;
+    out->y_cm = pose->y_cm + q->vy * h;
+    out->theta_deg = wrap180(pose->theta_deg + q->w * h);
 }

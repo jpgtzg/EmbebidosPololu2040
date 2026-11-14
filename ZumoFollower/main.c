@@ -1,7 +1,8 @@
 // ZumoFollower: sigue la ruta de waypoints con la pose de la camara recibida por CAN.
 // Arranca solo cuando la camara lo ve cerca de un waypoint y bien orientado, y se detiene
 // al volver a P1, al perder la camara o al salirse de la ruta. Boton A = paro de emergencia.
-// Compilar con -DDRY_RUN=ON para calcular e imprimir sin mover los motores.
+// Opciones de CMake: -DDRY_RUN=ON calcula e imprime sin mover los motores;
+// -DMODE_A=ON hace la prueba de la Parte A (avanzar A_DISTANCE_CM en +y desde donde este).
 #include <stdio.h>
 #include <math.h>
 #include "pico/stdlib.h"
@@ -16,8 +17,23 @@
 #ifndef DRY_RUN
 #define DRY_RUN 0
 #endif
+#ifndef MODE_A
+#define MODE_A 0
+#endif
+#ifndef A_DISTANCE_CM
+#define A_DISTANCE_CM       50.0f
+#endif
 #ifndef START_DELAY_MS
 #define START_DELAY_MS      2
+#endif
+#ifndef LATENCY_COMP
+#define LATENCY_COMP        0       // 1 = adelantar la pose segun su antiguedad
+#endif
+#ifndef PIPELINE_MS
+#define PIPELINE_MS         30      // retardo extra de CAN y proceso, ademas del de la camara
+#endif
+#ifndef THETA_BIAS_DEG
+#define THETA_BIAS_DEG      0.0f    // sesgo del angulo de la camara, se resta a cada pose
 #endif
 #define POSE_TIMEOUT_MS     400
 #define START_MAX_DIST_CM   15.0f
@@ -26,6 +42,7 @@
 #define MAX_XTRACK_CM       25.0f
 
 extern bool camera_get_pose(pose_t *out);
+extern uint8_t camera_last_age_ms(void);
 
 typedef enum { ST_IDLE, ST_RUNNING, ST_DONE, ST_ABORT } state_t;
 
@@ -51,8 +68,9 @@ int main(void) {
     absolute_time_t t0 = make_timeout_time_ms(300);
     while (!stdio_usb_connected() && !time_reached(t0)) sleep_ms(50);
 
-    printf("\n=== ZumoFollower | BASE_SPEED=%d KP=%.1f LOOKAHEAD=%.1f cm%s ===\n",
-           BASE_SPEED, (double)KP_TURN, (double)LOOKAHEAD_CM, DRY_RUN ? " | DRY_RUN" : "");
+    printf("\n=== ZumoFollower | recta=%d curva=%d KP=%.1f FF=%.2f LOOKAHEAD=%.1f cm%s%s ===\n",
+           STRAIGHT_SPEED, CURVE_SPEED, (double)KP_TURN, (double)FF_GAIN, (double)LOOKAHEAD_CM,
+           DRY_RUN ? " | DRY_RUN" : "", MODE_A ? " | MODO A" : "");
 
     while (!mcp2515_init()) { printf("[ERROR] MCP2515 no responde, reintentando...\n"); sleep_ms(1000); }
     while (!mcp2515_set_bitrate_500kbps(MCP2515_CRYSTAL_MHZ)) { printf("[ERROR] bit timing\n"); sleep_ms(1000); }
@@ -71,6 +89,9 @@ int main(void) {
     absolute_time_t run_start = get_absolute_time();
     bool a_prev = false;
     drive_cmd_t cmd = {0};
+    static path_t tmp;
+    pred_t pred;
+    pred_reset(&pred);
 
     bool arming = false;
     absolute_time_t arm_t0 = get_absolute_time();
@@ -85,7 +106,11 @@ int main(void) {
 
         bool fresh = false;
         pose_t p;
-        if (camera_get_pose(&p)) { pose = p; have_pose = true; fresh = true; last_pose_t = get_absolute_time(); }
+        if (camera_get_pose(&p)) {
+            p.theta_deg -= THETA_BIAS_DEG;
+            pose = p; have_pose = true; fresh = true; last_pose_t = get_absolute_time();
+            pred_update(&pred, &pose, to_ms_since_boot(last_pose_t));
+        }
         bool stale = !have_pose || absolute_time_diff_us(last_pose_t, get_absolute_time()) > POSE_TIMEOUT_MS * 1000;
 
         if (a_edge && st == ST_RUNNING) {
@@ -97,20 +122,30 @@ int main(void) {
             if (stale) {
                 why = "sin pose de la camara";
             } else {
+#if MODE_A
+                path_build_line(&tmp, pose.x_cm, pose.y_cm, pose.x_cm, pose.y_cm + A_DISTANCE_CM);
+                float he = path_start_heading_error(&tmp, &pose);
+                if (fabsf(he) > START_MAX_HEAD_DEG) why = "mal orientado (debe mirar a +y)";
+                else { ok = true; why = "listo"; }
+#else
                 float d;
                 int k = path_nearest_wp(&pose, &d);
-                path_t tmp;
                 path_build_from(&tmp, k);
                 float he = path_start_heading_error(&tmp, &pose);
                 if (d > START_MAX_DIST_CM)               why = "lejos de un waypoint";
                 else if (fabsf(he) > START_MAX_HEAD_DEG) why = "mal orientado";
                 else { ok = true; start_wp = k; why = "listo"; }
+#endif
             }
             if (!ok) {
                 arming = false; yellow_led(false);
             } else if (!arming) {
                 arming = true; arm_t0 = get_absolute_time(); arm_ref = pose;
+#if MODE_A
+                printf("[ARMADO] modo A: avanza %.0f cm en +y; arranca en %d ms\n", (double)A_DISTANCE_CM, START_DELAY_MS);
+#else
                 printf("[ARMADO] salida en P%d; arranca en %d ms\n", WAYPOINTS[start_wp].id, START_DELAY_MS);
+#endif
             } else {
                 float moved = hypotf(pose.x_cm - arm_ref.x_cm, pose.y_cm - arm_ref.y_cm);
                 int64_t el_ms = absolute_time_diff_us(arm_t0, get_absolute_time()) / 1000;
@@ -118,10 +153,14 @@ int main(void) {
                 if (moved > START_STILL_CM) {
                     arm_t0 = get_absolute_time(); arm_ref = pose;
                 } else if (el_ms >= START_DELAY_MS) {
+#if MODE_A
+                    path_build_line(&path, pose.x_cm, pose.y_cm, pose.x_cm, pose.y_cm + A_DISTANCE_CM);
+#else
                     path_build_from(&path, start_wp);
+#endif
                     st = ST_RUNNING; run_start = get_absolute_time(); arming = false;
                     yellow_led(true);
-                    printf("[INICIO] desde P%d pose=(%.1f, %.1f, %.1f) puntos=%d\n", WAYPOINTS[start_wp].id,
+                    printf("[INICIO] pose=(%.1f, %.1f, %.1f) puntos=%d\n",
                            (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg, path.n);
                 }
             }

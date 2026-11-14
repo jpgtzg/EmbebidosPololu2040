@@ -4,6 +4,8 @@
 #include "mcp2515.h"
 #include "can_pose.h"
 
+static uint8_t s_age_ms = 0;
+
 // Devuelve true si llego una pose nueva; si hay varias acumuladas se queda con la ultima.
 bool camera_get_pose(pose_t *out) {
     static uint8_t last_seq = 0;
@@ -18,7 +20,11 @@ bool camera_get_pose(pose_t *out) {
         if (have_seq && p.seq == last_seq) continue;
         last_seq = p.seq; have_seq = true;
         out->x_cm = p.x_cm; out->y_cm = p.y_cm; out->theta_deg = p.theta_deg;
+        s_age_ms = p.age_ms;
         got = true;
     }
     return got;
 }
+
+// Antiguedad (ms) que la camara reporto para la ultima pose recibida.
+uint8_t camera_last_age_ms(void) { return s_age_ms; }
