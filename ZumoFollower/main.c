@@ -170,11 +170,16 @@ int main(void) {
             if (stale) {
                 motors_out(0, 0);
             } else if (fresh) {
-                path_follow(&path, &pose, &cmd);
+                pose_t ctl = pose;
+#if LATENCY_COMP
+                pred_apply(&pred, &pose, camera_last_age_ms() + PIPELINE_MS, &ctl);
+#endif
+                path_follow(&path, &ctl, &cmd);
                 if (path.done) {
                     motors_out(0, 0); st = ST_DONE; yellow_led(false);
-                    printf("[FIN] vuelta completa, de regreso en P1, en %.1f s\n",
-                           (double)(absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f));
+                    printf("[FIN] ruta completa en %.1f s | pose final=(%.1f, %.1f, %.1f)\n",
+                           (double)(absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f),
+                           (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg);
                 } else if (cmd.xtrack_cm > MAX_XTRACK_CM) {
                     motors_out(0, 0); st = ST_ABORT; yellow_led(false);
                     printf("[PARO] fuera de la ruta (%.1f cm)\n", (double)cmd.xtrack_cm);
@@ -186,11 +191,11 @@ int main(void) {
 
         if (time_reached(next_print)) {
             next_print = make_timeout_time_ms(250);
-            printf("%s pose=(%6.1f,%6.1f,%6.1f)%s | seg=%2d/%d err=%6.1f xt=%4.1f | L=%5d R=%5d%s%s\n",
+            printf("%s pose=(%6.1f,%6.1f,%6.1f)%s | seg=%2d/%d err=%6.1f xt=%4.1f | v=%4d L=%5d R=%5d%s%s\n",
                    st == ST_IDLE ? "IDLE " : st == ST_RUNNING ? "RUN  " : st == ST_DONE ? "DONE " : "ABORT",
                    (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg, stale ? " [SIN POSE]" : "",
                    path.seg, path.n - 1, (double)cmd.err_deg, (double)cmd.xtrack_cm,
-                   (int)cmd.left, (int)cmd.right,
+                   (int)cmd.speed, (int)cmd.left, (int)cmd.right,
                    st == ST_IDLE ? " | " : "", st == ST_IDLE ? why : "");
         }
 

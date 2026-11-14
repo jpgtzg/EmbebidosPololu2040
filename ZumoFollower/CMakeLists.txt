@@ -50,10 +50,17 @@ target_include_directories(ZumoFollower PRIVATE
     ${WAYPOINTS_DIR}
 )
 
-# Prueba con las ruedas en el aire (no mueve motores): cmake -DDRY_RUN=ON
 option(DRY_RUN "No mover motores, solo imprimir" OFF)
+option(MODE_A "Parte A: avanzar 50 cm en +y desde donde este" OFF)
+option(LATENCY_COMP "Adelantar la pose segun la antiguedad de la camara" OFF)
 if(DRY_RUN)
     target_compile_definitions(ZumoFollower PRIVATE DRY_RUN=1)
+endif()
+if(MODE_A)
+    target_compile_definitions(ZumoFollower PRIVATE MODE_A=1)
+endif()
+if(LATENCY_COMP)
+    target_compile_definitions(ZumoFollower PRIVATE LATENCY_COMP=1)
 endif()
 
 target_link_libraries(ZumoFollower
