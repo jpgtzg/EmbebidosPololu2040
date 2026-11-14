@@ -31,27 +31,31 @@ static void add_turn(path_t *P, const waypoint_t *E, const waypoint_t *X, bool i
 
     float hx = cosf(E->theta_deg * D2R), hy = sinf(E->theta_deg * D2R);
     float cx = X->x_cm - E->x_cm, cy = X->y_cm - E->y_cm;
-    float chord = sqrtf(cx * cx + cy * cy);
+    float chord2 = cx * cx + cy * cy;
+    float chord = sqrtf(chord2);
     if (chord < 6.0f) {               // entrada y salida casi en el mismo punto: sin arco
         add(P, X->x_cm, X->y_cm);
         return;
     }
-    // la salida queda a la izquierda del rumbo de entrada => giro antihorario
-    float ccw = (hx * cy - hy * cx) > 0.0f ? 1.0f : -1.0f;
-
-    if (is_u) {                       // semicirculo: el diametro es la cuerda E-X
-        float mx = (E->x_cm + X->x_cm) * 0.5f, my = (E->y_cm + X->y_cm) * 0.5f;
-        float r = chord * 0.5f;
-        float a0 = atan2f(E->y_cm - my, E->x_cm - mx) * R2D;
-        add_arc(P, mx, my, r, a0, ccw * 180.0f);
-    } else {                          // cuarto de circulo: cuerda = r * sqrt(2)
-        float r = chord / 1.41421356f;
-        float lx = -hy, ly = hx;      // normal izquierda del rumbo de entrada
-        float ox = E->x_cm + ccw * r * lx, oy = E->y_cm + ccw * r * ly;
-        float a0 = atan2f(E->y_cm - oy, E->x_cm - ox) * R2D;
-        add_arc(P, ox, oy, r, a0, ccw * 90.0f);
+    // Circulo tangente al rumbo de entrada que pasa exactamente por E y por X.
+    // Centro = E + s*n, con n = normal izquierda del rumbo; s > 0 gira a la izquierda (antihorario).
+    // (Para una U con la cuerda perpendicular al rumbo da el semicirculo de diametro E-X.)
+    float nx = -hy, ny = hx;
+    float nc = nx * cx + ny * cy;     // componente de la cuerda sobre la normal
+    if (fabsf(nc) < 0.02f * chord) {  // casi recta: sin arco
+        add(P, X->x_cm, X->y_cm);
+        return;
     }
+    float s = chord2 / (2.0f * nc);
+    float ox = E->x_cm + s * nx, oy = E->y_cm + s * ny, r = fabsf(s);
+    float a0 = atan2f(E->y_cm - oy, E->x_cm - ox) * R2D;
+    float a1 = atan2f(X->y_cm - oy, X->x_cm - ox) * R2D;
+    float sweep = a1 - a0;
+    if (s > 0.0f) { while (sweep < 0.0f)    sweep += 360.0f; while (sweep >= 360.0f) sweep -= 360.0f; }
+    else          { while (sweep > 0.0f)    sweep -= 360.0f; while (sweep <= -360.0f) sweep += 360.0f; }
+    add_arc(P, ox, oy, r, a0, sweep);
     add(P, X->x_cm, X->y_cm);
+    (void)is_u;
 }
 
 void path_build(path_t *P) { path_build_from(P, WP_START_IDX); }
@@ -75,10 +79,6 @@ float path_start_heading_error(const path_t *P, const pose_t *pose) {
 void path_build_from(path_t *P, int from) {
     P->n = 0; P->seg = 0; P->done = false;
     int i = from;
-    if (from == WP_START_IDX) {       // vuelta completa: sale de P14 y recorre P1..P14
-        add(P, WAYPOINTS[WP_START_IDX].x_cm, WAYPOINTS[WP_START_IDX].y_cm);
-        i = 0;
-    }
     while (i < WP_COUNT) {
         const waypoint_t *w = &WAYPOINTS[i];
         if (i + 1 < WP_COUNT) {
@@ -89,6 +89,8 @@ void path_build_from(path_t *P, int from) {
         add(P, w->x_cm, w->y_cm);
         i++;
     }
+    // cierra la vuelta: P14 -> P1 (sube por la recta izquierda)
+    add(P, WAYPOINTS[WP_FINAL_IDX].x_cm, WAYPOINTS[WP_FINAL_IDX].y_cm);
 }
 
 static int32_t clamp_speed(float v) {

@@ -23,9 +23,9 @@ typedef struct {
 #define WP_COUNT 14
 extern const waypoint_t WAYPOINTS[WP_COUNT];
 
-// Route order (indices into WAYPOINTS): start -> ... -> final
-#define WP_START_IDX  13   // P14, heading +y
-#define WP_FINAL_IDX  13   // P14 again after closing the lap (via P13, 90 deg corner)
+// Route order (indices into WAYPOINTS): P1 -> P2 -> ... -> P14 -> back to P1
+#define WP_START_IDX  0    // P1, heading +y
+#define WP_FINAL_IDX  0    // P1 again after closing the lap (P13 -> P14 corner, then up the left straight)
 
 static inline bool wp_is_turn90(const waypoint_t *w) {
     return w->kind == WP_C90_ENTRY || w->kind == WP_C90_EXIT;

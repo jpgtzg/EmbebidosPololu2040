@@ -4,12 +4,12 @@
 //
 // ARRANQUE AUTOMATICO (no necesita USB ni botones):
 //   1. Enciende el Zumo con bateria y pon el Zumo QUIETO sobre un waypoint de la ruta
-//      (P14 = vuelta completa), con el frente hacia donde va la ruta (a < 60 deg).
+//      (P1 = vuelta completa), con el frente hacia donde va la ruta (a < 60 deg).
 //   2. Cuando la camara lo ve quieto y bien orientado, cuenta START_DELAY_S segundos
 //      (el LED amarillo parpadea) para que te alejes, y arranca solo.
-//   3. Corre desde ese waypoint hasta P14 y se detiene.
+//   3. Corre desde ese waypoint P1 -> P2 -> ... -> P14 -> de regreso a P1 y se detiene.
 // SEGURIDAD: se detiene solo si pierde la camara > 0.4 s, si se sale > 25 cm de la ruta o
-// al llegar a P14. El boton A (si lo alcanzas) tambien lo para.
+// al volver a P1. El boton A (si lo alcanzas) tambien lo para.
 //
 // Con las ruedas en el aire: compilar con -DDRY_RUN=ON (calcula y imprime, sin mover motores).
 #include <stdio.h>
@@ -17,8 +17,7 @@
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "motors.h"
-#include "button.h"
-#include "pololu_zumo_2040_robot.h"
+#include "pololu_zumo_2040_robot.h"   // incluye button.h y yellow_led()
 #include "config.h"
 #include "mcp2515.h"
 #include "waypoints.h"
@@ -70,8 +69,8 @@ int main(void) {
 
     static path_t path;
     path_build(&path);
-    printf("Ruta completa: %d puntos. Final = P14 (%.1f, %.1f)\n", path.n,
-           (double)WAYPOINTS[WP_START_IDX].x_cm, (double)WAYPOINTS[WP_START_IDX].y_cm);
+    printf("Ruta completa: %d puntos. Inicio y final = P1 (%.1f, %.1f)\n", path.n,
+           (double)WAYPOINTS[WP_FINAL_IDX].x_cm, (double)WAYPOINTS[WP_FINAL_IDX].y_cm);
 
     state_t st = ST_IDLE;
     pose_t pose = {0};
@@ -149,7 +148,7 @@ int main(void) {
                 path_follow(&path, &pose, &cmd);
                 if (path.done) {
                     motors_out(0, 0); st = ST_DONE; yellow_led(false);
-                    printf("[FIN] llego a P14 en %.1f s\n",
+                    printf("[FIN] vuelta completa, de regreso en P1, en %.1f s\n",
                            (double)(absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f));
                 } else if (cmd.xtrack_cm > MAX_XTRACK_CM) {
                     motors_out(0, 0); st = ST_ABORT; yellow_led(false);
