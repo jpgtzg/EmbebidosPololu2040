@@ -177,11 +177,18 @@ int main(void) {
                 pred_apply(&pred, &pose, camera_last_age_ms() + PIPELINE_MS, &ctl);
 #endif
                 path_follow(&path, &ctl, &cmd);
+                float t_s = absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f;
+                for (int k = 0; k < WP_COUNT; k++) {
+                    if (cmd.wp_new_reached & (1u << k))
+                        printf("[P%d] alcanzado a los %.1f s (a %.1f cm)\n", WAYPOINTS[k].id, (double)t_s, (double)path.wp_dist[k]);
+                    if (cmd.wp_new_missed & (1u << k))
+                        printf("[P%d] OMITIDO\n", WAYPOINTS[k].id);
+                }
                 if (path.done) {
                     motors_out(0, 0); st = ST_DONE; yellow_led(false);
                     printf("[FIN] ruta completa en %.1f s | pose final=(%.1f, %.1f, %.1f)\n",
-                           (double)(absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f),
-                           (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg);
+                           (double)t_s, (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg);
+                    printf("Waypoints alcanzados: %d de %d\n", path_wp_reached(&path), path.wp_n);
                 } else if (cmd.xtrack_cm > MAX_XTRACK_CM) {
                     motors_out(0, 0); st = ST_ABORT; yellow_led(false);
                     printf("[PARO] fuera de la ruta (%.1f cm)\n", (double)cmd.xtrack_cm);
@@ -193,10 +200,11 @@ int main(void) {
 
         if (time_reached(next_print)) {
             next_print = make_timeout_time_ms(250);
-            printf("%s pose=(%6.1f,%6.1f,%6.1f)%s | seg=%2d/%d err=%6.1f xt=%4.1f | v=%4d L=%5d R=%5d%s%s\n",
+            printf("%s pose=(%6.1f,%6.1f,%6.1f)%s | seg=%2d/%d sig=P%d err=%6.1f xt=%4.1f | v=%4d L=%5d R=%5d%s%s\n",
                    st == ST_IDLE ? "IDLE " : st == ST_RUNNING ? "RUN  " : st == ST_DONE ? "DONE " : "ABORT",
                    (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg, stale ? " [SIN POSE]" : "",
-                   path.seg, path.n - 1, (double)cmd.err_deg, (double)cmd.xtrack_cm,
+                   path.seg, path.n - 1, st == ST_RUNNING ? path_next_wp_id(&path) : 0,
+                   (double)cmd.err_deg, (double)cmd.xtrack_cm,
                    (int)cmd.speed, (int)cmd.left, (int)cmd.right,
                    st == ST_IDLE ? " | " : "", st == ST_IDLE ? why : "");
         }

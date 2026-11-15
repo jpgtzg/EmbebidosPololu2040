@@ -22,6 +22,17 @@ static void add(path_t *P, float x, float y) {
     if (P->n < PATH_MAX_POINTS) { P->p[P->n].x = x; P->p[P->n].y = y; P->n++; }
 }
 
+static void begin(path_t *P) {
+    P->n = 0; P->wp_n = 0; P->wp_next = 0;
+    for (int k = 0; k < WP_COUNT; k++) { P->wp_vertex[k] = -1; P->wp_state[k] = 0; P->wp_dist[k] = 0.0f; }
+}
+
+// Registra que el ultimo punto agregado es el waypoint idx, en el orden de recorrido.
+static void mark(path_t *P, int idx) {
+    P->wp_vertex[idx] = P->n - 1;
+    P->wp_seq[P->wp_n++] = idx;
+}
+
 // Puntos interiores de un arco; sweep en grados, positivo = antihorario.
 static void add_arc(path_t *P, float cx, float cy, float r, float a0, float sweep) {
     int steps = (int)ceilf(fabsf(sweep) / ARC_STEP_DEG);
@@ -33,8 +44,10 @@ static void add_arc(path_t *P, float cx, float cy, float r, float a0, float swee
 
 // Agrega la entrada E, el arco y la salida X. El arco es el circulo tangente al rumbo de
 // entrada que pasa por E y por X.
-static void add_turn(path_t *P, const waypoint_t *E, const waypoint_t *X) {
+static void add_turn(path_t *P, int ei, int xi) {
+    const waypoint_t *E = &WAYPOINTS[ei], *X = &WAYPOINTS[xi];
     add(P, E->x_cm, E->y_cm);
+    mark(P, ei);
 
     float hx = cosf(E->theta_deg * D2R), hy = sinf(E->theta_deg * D2R);
     float cx = X->x_cm - E->x_cm, cy = X->y_cm - E->y_cm;
@@ -45,6 +58,7 @@ static void add_turn(path_t *P, const waypoint_t *E, const waypoint_t *X) {
     float nc = nx * cx + ny * cy;
     if (chord < 6.0f || fabsf(nc) < 0.02f * chord) {
         add(P, X->x_cm, X->y_cm);
+        mark(P, xi);
         return;
     }
 
@@ -57,6 +71,7 @@ static void add_turn(path_t *P, const waypoint_t *E, const waypoint_t *X) {
     else          { while (sweep > 0.0f)  sweep -= 360.0f; while (sweep <= -360.0f) sweep += 360.0f; }
     add_arc(P, ox, oy, fabsf(s), a0, sweep);
     add(P, X->x_cm, X->y_cm);
+    mark(P, xi);
 }
 
 // Curvatura con signo de cada segmento (1/cm), a partir del cambio de rumbo en sus vertices.
@@ -83,7 +98,7 @@ static void finalize(path_t *P, float finish_cm) {
 void path_build(path_t *P) { path_build_from(P, WP_START_IDX); }
 
 void path_build_from(path_t *P, int from) {
-    P->n = 0;
+    begin(P);
     int i = from;
     while (i < WP_COUNT) {
         const waypoint_t *w = &WAYPOINTS[i];
@@ -91,17 +106,21 @@ void path_build_from(path_t *P, int from) {
             const waypoint_t *nx = &WAYPOINTS[i + 1];
             bool u   = w->kind == WP_U_ENTRY   && nx->kind == WP_U_EXIT;
             bool c90 = w->kind == WP_C90_ENTRY && nx->kind == WP_C90_EXIT;
-            if (u || c90) { add_turn(P, w, nx); i += 2; continue; }
+            if (u || c90) { add_turn(P, i, i + 1); i += 2; continue; }
         }
         add(P, w->x_cm, w->y_cm);
+        mark(P, i);
         i++;
     }
     add(P, WAYPOINTS[WP_FINAL_IDX].x_cm, WAYPOINTS[WP_FINAL_IDX].y_cm);
     finalize(P, FINISH_RADIUS_CM);
+
+    // El robot sale parado sobre el primer waypoint: ya esta alcanzado.
+    if (P->wp_n > 0) { P->wp_state[P->wp_seq[0]] = 1; P->wp_next = 1; }
 }
 
 void path_build_line(path_t *P, float x0, float y0, float x1, float y1) {
-    P->n = 0;
+    begin(P);
     add(P, x0, y0);
     add(P, x1, y1);
     finalize(P, LINE_FINISH_CM);
@@ -150,6 +169,24 @@ void path_follow(path_t *P, const pose_t *pose, drive_cmd_t *out) {
     pt_t cur = { P->p[P->seg].x + t * (P->p[P->seg + 1].x - P->p[P->seg].x),
                  P->p[P->seg].y + t * (P->p[P->seg + 1].y - P->p[P->seg].y) };
     out->xtrack_cm = hypotf(px - cur.x, py - cur.y);
+
+    // Waypoint siguiente: alcanzado si el robot pasa a menos de WP_REACH_CM; omitido si ya lo rebaso.
+    out->wp_new_reached = 0;
+    out->wp_new_missed = 0;
+    while (P->wp_next < P->wp_n) {
+        int k = P->wp_seq[P->wp_next];
+        float d = hypotf(WAYPOINTS[k].x_cm - px, WAYPOINTS[k].y_cm - py);
+        if (d <= WP_REACH_CM) {
+            P->wp_state[k] = 1; P->wp_dist[k] = d;
+            out->wp_new_reached |= (uint16_t)(1u << k);
+        } else if (P->seg > P->wp_vertex[k]) {
+            P->wp_state[k] = -1;
+            out->wp_new_missed |= (uint16_t)(1u << k);
+        } else {
+            break;
+        }
+        P->wp_next++;
+    }
 
     // Inicio y final coinciden en P1: solo cuenta como llegada en los ultimos segmentos.
     bool final_region = P->seg >= P->n - 4;
@@ -205,6 +242,17 @@ void path_follow(path_t *P, const pose_t *pose, drive_cmd_t *out) {
     out->right = clamp_speed(v + k);
     out->err_deg = e;
     out->speed = v;
+}
+
+int path_wp_reached(const path_t *P) {
+    int n = 0;
+    for (int k = 0; k < WP_COUNT; k++) if (P->wp_state[k] == 1) n++;
+    return n;
+}
+
+int path_next_wp_id(const path_t *P) {
+    if (P->wp_next < P->wp_n) return WAYPOINTS[P->wp_seq[P->wp_next]].id;
+    return WAYPOINTS[WP_FINAL_IDX].id;
 }
 
 void pred_reset(pred_t *q) { q->have = false; q->vx = q->vy = q->w = 0.0f; }

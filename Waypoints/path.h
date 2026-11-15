@@ -42,6 +42,9 @@
 #ifndef LINE_FINISH_CM
 #define LINE_FINISH_CM   2.5f    // idem para el tramo recto de la Parte A
 #endif
+#ifndef WP_REACH_CM
+#define WP_REACH_CM      8.0f    // a esta distancia de un waypoint se considera alcanzado
+#endif
 #define PATH_MAX_POINTS  128
 #define ARC_STEP_DEG     20.0f
 
@@ -55,9 +58,19 @@ typedef struct {
     float finish_cm;
     float v_cmd;                        // velocidad actual, para la rampa de aceleracion
     bool  done;
+
+    // Seguimiento de waypoints, en el orden en que se recorren
+    int    wp_seq[WP_COUNT];            // indices en WAYPOINTS[] en orden de recorrido
+    int    wp_n;                        // cuantos waypoints tiene esta ruta
+    int    wp_next;                     // posicion en wp_seq del siguiente por alcanzar
+    int    wp_vertex[WP_COUNT];         // vertice de la ruta donde esta cada waypoint
+    int8_t wp_state[WP_COUNT];          // 0 pendiente, 1 alcanzado, -1 omitido (por indice de WAYPOINTS[])
+    float  wp_dist[WP_COUNT];           // distancia a la que se alcanzo (cm)
 } path_t;
 
 typedef struct {
+    uint16_t wp_new_reached;   // bit k = WAYPOINTS[k] alcanzado en este paso
+    uint16_t wp_new_missed;    // bit k = WAYPOINTS[k] omitido en este paso
     int32_t left, right;   // para motors_set_speeds()
     float   err_deg;       // error de rumbo; positivo = objetivo a la izquierda
     float   speed;         // velocidad base calculada
@@ -81,6 +94,10 @@ float path_start_heading_error(const path_t *P, const pose_t *pose);
 
 // Un paso de control con una pose nueva. Deja done = true al llegar al final.
 void path_follow(path_t *P, const pose_t *pose, drive_cmd_t *out);
+
+// Cuantos waypoints se han alcanzado y numero (P#) del siguiente; 1 (P1) cuando solo falta cerrar la vuelta.
+int path_wp_reached(const path_t *P);
+int path_next_wp_id(const path_t *P);
 
 // Predictor de pose: estima la velocidad a partir de poses consecutivas de la camara y
 // adelanta la pose actual para compensar el retardo de medicion.
