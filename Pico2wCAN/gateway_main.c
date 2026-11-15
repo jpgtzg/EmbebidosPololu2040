@@ -11,6 +11,8 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
+#include "lwip/netif.h"
+#include "lwip/ip4_addr.h"
 #include "config.h"
 #include "mcp2515.h"
 #include "can_pose.h"
@@ -25,6 +27,34 @@ static volatile bool    s_new_pose = false;
 static can_pose_t       s_pose;
 static volatile uint8_t s_seq = 0;
 static uint32_t         s_udp_rx = 0, s_no_marker = 0;
+
+static ip_addr_t       s_src;
+static volatile bool   s_have_src = false;
+
+static bool wifi_connect(void) {
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 15000) == 0) return true;
+        printf("Wi-Fi no conecta (intento %d de 3)\n", attempt);
+    }
+    return false;
+}
+
+// Si el chip de Wi-Fi se traba, lo apaga y lo enciende de nuevo en vez de reintentar sobre el mismo estado.
+static void wifi_start(void) {
+    while (true) {
+        if (cyw43_arch_init() == 0) {
+            cyw43_arch_enable_sta_mode();
+            if (wifi_connect()) break;
+            printf("Reiniciando el chip Wi-Fi...\n");
+        } else {
+            printf("Wi-Fi init failed\n");
+        }
+        cyw43_arch_deinit();
+        sleep_ms(1000);
+    }
+    cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);   // sin esto el broadcast llega con segundos de retraso
+    printf("Wi-Fi conectado, IP %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
+}
 
 static bool get_num(const char *obj, const char *key, float *out) {
     const char *k = strstr(obj, key);
@@ -64,8 +94,10 @@ static bool parse_pose(char *json, int want_id, can_pose_t *out) {
 
 static void on_udp_packet(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                           const ip_addr_t *addr, u16_t port) {
-    (void)arg; (void)pcb; (void)addr; (void)port;
+    (void)arg; (void)pcb; (void)port;
     if (!p) return;
+    s_src = *addr;
+    s_have_src = true;
     static char buf[1536];
     u16_t n = pbuf_copy_partial(p, buf, sizeof(buf) - 1, 0);
     buf[n] = '\0';
@@ -101,12 +133,7 @@ int main(void) {
     else printf("[OK] CAN en modo NORMAL, 500 kbit/s, cristal %u MHz\n", MCP2515_CRYSTAL_MHZ);
 
     // ---- Wi-Fi + UDP ----
-    if (cyw43_arch_init()) { printf("Wi-Fi init failed\n"); return -1; }
-    cyw43_arch_enable_sta_mode();
-    while (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000) != 0)
-        printf("Wi-Fi connect failed, retrying...\n");
-    printf("Wi-Fi conectado\n");
-    cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);   // sin esto el broadcast llega con segundos de retraso
+    wifi_start();
 
     struct udp_pcb *pcb = udp_new();
     udp_bind(pcb, IP_ADDR_ANY, TELEMETRY_PORT);
@@ -114,9 +141,18 @@ int main(void) {
 
     uint32_t sent = 0, failed = 0;
     absolute_time_t next_report = make_timeout_time_ms(1000);
+    absolute_time_t next_link = make_timeout_time_ms(3000);
 
     while (true) {
         cyw43_arch_poll();
+
+        if (time_reached(next_link)) {
+            if (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_UP) {
+                printf("Wi-Fi perdido, reconectando...\n");
+                wifi_connect();
+            }
+            next_link = make_timeout_time_ms(3000);
+        }
 
         if (s_new_pose) {
             can_pose_t pose = s_pose;          // copia local
@@ -127,8 +163,9 @@ int main(void) {
         }
 
         if (time_reached(next_report)) {
-            printf("UDP=%u sin_marcador=%u | CAN ok=%u fallo=%u | ultima x=%.1f y=%.1f th=%.1f\n",
-                   (unsigned)s_udp_rx, (unsigned)s_no_marker, (unsigned)sent, (unsigned)failed,
+            printf("UDP=%u (de %s) sin_marcador=%u | CAN ok=%u fallo=%u | ultima x=%.1f y=%.1f th=%.1f\n",
+                   (unsigned)s_udp_rx, s_have_src ? ip4addr_ntoa(ip_2_ip4(&s_src)) : "-",
+                   (unsigned)s_no_marker, (unsigned)sent, (unsigned)failed,
                    s_pose.x_cm, s_pose.y_cm, s_pose.theta_deg);
             next_report = make_timeout_time_ms(1000);
         }

@@ -10,7 +10,7 @@
 
 const waypoint_t WAYPOINTS[WP_COUNT] = {
     // id    x        y        theta    kind
-    { 1,  -40.8f,  101.6f,   91.0f, WP_U_ENTRY   },  // top-left,  exit of left straight (up)
+    { 1,  -40.8f,  101.6f,   91.0f, WP_U_ENTRY   },  // START / FINAL: top-left, left straight (up)
     { 2,  -18.2f,  100.7f,  -84.0f, WP_U_EXIT    },  // end of top U, going down
     { 3,  -22.9f,   30.2f,  -86.0f, WP_U_ENTRY   },  // bottom U entry
     { 4,   -5.6f,   30.5f,   92.0f, WP_U_EXIT    },  // bottom U exit, going up
@@ -23,5 +23,5 @@ const waypoint_t WAYPOINTS[WP_COUNT] = {
     {11,   36.9f,   11.4f,  -89.0f, WP_C90_ENTRY },  // bottom-right corner (-90 -> 180)
     {12,   35.7f,    9.5f,  179.0f, WP_C90_EXIT  },
     {13,  -23.0f,    7.9f,  178.0f, WP_C90_ENTRY },  // bottom-left corner (180 -> 90)
-    {14,  -39.6f,   12.1f,   90.0f, WP_C90_EXIT  },  // START / FINAL
+    {14,  -39.6f,   12.1f,   90.0f, WP_C90_EXIT  },  // then up the left straight back to P1
 };

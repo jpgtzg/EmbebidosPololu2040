@@ -138,7 +138,9 @@ int main(void) {
 #endif
             }
             if (!ok) {
-                arming = false; yellow_led(false);
+                // LED amarillo sin USB: parpadeo lento = sin pose; rapido = hay pose pero no esta listo
+                uint32_t ms = to_ms_since_boot(get_absolute_time());
+                arming = false; yellow_led(stale ? (ms / 500) % 2 == 0 : (ms / 100) % 2 == 0);
             } else if (!arming) {
                 arming = true; arm_t0 = get_absolute_time(); arm_ref = pose;
 #if MODE_A
