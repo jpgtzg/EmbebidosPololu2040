@@ -98,15 +98,3 @@ void path_follow(path_t *P, const pose_t *pose, drive_cmd_t *out);
 // Cuantos waypoints se han alcanzado y numero (P#) del siguiente; 1 (P1) cuando solo falta cerrar la vuelta.
 int path_wp_reached(const path_t *P);
 int path_next_wp_id(const path_t *P);
-
-// Predictor de pose: estima la velocidad a partir de poses consecutivas de la camara y
-// adelanta la pose actual para compensar el retardo de medicion.
-typedef struct {
-    float    x, y, th, vx, vy, w;
-    uint32_t t_ms;
-    bool     have;
-} pred_t;
-
-void pred_reset(pred_t *q);
-void pred_update(pred_t *q, const pose_t *pose, uint32_t t_ms);
-void pred_apply(const pred_t *q, const pose_t *pose, float horizon_ms, pose_t *out);

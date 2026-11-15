@@ -9,8 +9,6 @@
 #define ARC_SEG_MAX_CM  12.0f   // segmentos mas largos se consideran recta
 #define END_MIN_SPEED   500
 #define END_BRAKE_PER_CM 60.0f
-#define PRED_ALPHA      0.5f
-#define PRED_MAX_MS     300.0f
 
 static float wrap180(float a) {
     while (a > 180.0f)   a -= 360.0f;
@@ -253,30 +251,4 @@ int path_wp_reached(const path_t *P) {
 int path_next_wp_id(const path_t *P) {
     if (P->wp_next < P->wp_n) return WAYPOINTS[P->wp_seq[P->wp_next]].id;
     return WAYPOINTS[WP_FINAL_IDX].id;
-}
-
-void pred_reset(pred_t *q) { q->have = false; q->vx = q->vy = q->w = 0.0f; }
-
-void pred_update(pred_t *q, const pose_t *pose, uint32_t t_ms) {
-    if (q->have) {
-        float dt = (float)(t_ms - q->t_ms) / 1000.0f;
-        if (dt > 0.02f && dt < 0.5f) {
-            q->vx = PRED_ALPHA * ((pose->x_cm - q->x) / dt) + (1.0f - PRED_ALPHA) * q->vx;
-            q->vy = PRED_ALPHA * ((pose->y_cm - q->y) / dt) + (1.0f - PRED_ALPHA) * q->vy;
-            q->w  = PRED_ALPHA * (wrap180(pose->theta_deg - q->th) / dt) + (1.0f - PRED_ALPHA) * q->w;
-        } else {
-            q->vx = q->vy = q->w = 0.0f;
-        }
-    }
-    q->x = pose->x_cm; q->y = pose->y_cm; q->th = pose->theta_deg;
-    q->t_ms = t_ms; q->have = true;
-}
-
-void pred_apply(const pred_t *q, const pose_t *pose, float horizon_ms, pose_t *out) {
-    if (horizon_ms < 0.0f) horizon_ms = 0.0f;
-    if (horizon_ms > PRED_MAX_MS) horizon_ms = PRED_MAX_MS;
-    float h = horizon_ms / 1000.0f;
-    out->x_cm = pose->x_cm + q->vx * h;
-    out->y_cm = pose->y_cm + q->vy * h;
-    out->theta_deg = wrap180(pose->theta_deg + q->w * h);
 }

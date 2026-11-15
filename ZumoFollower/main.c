@@ -1,6 +1,7 @@
 // ZumoFollower: sigue la ruta de waypoints con la pose de la camara recibida por CAN.
 // Arranca solo cuando la camara lo ve cerca de un waypoint y bien orientado, y se detiene
 // al volver a P1, al perder la camara o al salirse de la ruta. Boton A = paro de emergencia.
+// LED amarillo sin USB: parpadeo lento = sin pose; rapido = hay pose pero no esta listo; fijo = corriendo.
 // Opciones de CMake: -DDRY_RUN=ON calcula e imprime sin mover los motores;
 // -DMODE_A=ON hace la prueba de la Parte A (avanzar A_DISTANCE_CM en +y desde donde este).
 #include <stdio.h>
@@ -23,26 +24,12 @@
 #ifndef A_DISTANCE_CM
 #define A_DISTANCE_CM       50.0f
 #endif
-#ifndef START_DELAY_MS
-#define START_DELAY_MS      2
-#endif
-#ifndef LATENCY_COMP
-#define LATENCY_COMP        0       // 1 = adelantar la pose segun su antiguedad
-#endif
-#ifndef PIPELINE_MS
-#define PIPELINE_MS         30      // retardo extra de CAN y proceso, ademas del de la camara
-#endif
-#ifndef THETA_BIAS_DEG
-#define THETA_BIAS_DEG      0.0f    // sesgo del angulo de la camara, se resta a cada pose
-#endif
 #define POSE_TIMEOUT_MS     400
 #define START_MAX_DIST_CM   15.0f
 #define START_MAX_HEAD_DEG  60.0f
-#define START_STILL_CM      1.5f
 #define MAX_XTRACK_CM       25.0f
 
 extern bool camera_get_pose(pose_t *out);
-extern uint8_t camera_last_age_ms(void);
 
 typedef enum { ST_IDLE, ST_RUNNING, ST_DONE, ST_ABORT } state_t;
 
@@ -89,14 +76,6 @@ int main(void) {
     absolute_time_t run_start = get_absolute_time();
     bool a_prev = false;
     drive_cmd_t cmd = {0};
-    static path_t tmp;
-    pred_t pred;
-    pred_reset(&pred);
-
-    bool arming = false;
-    absolute_time_t arm_t0 = get_absolute_time();
-    pose_t arm_ref = {0};
-    int start_wp = WP_START_IDX;
     const char *why = "esperando pose";
 
     while (true) {
@@ -105,12 +84,7 @@ int main(void) {
         a_prev = a_now;
 
         bool fresh = false;
-        pose_t p;
-        if (camera_get_pose(&p)) {
-            p.theta_deg -= THETA_BIAS_DEG;
-            pose = p; have_pose = true; fresh = true; last_pose_t = get_absolute_time();
-            pred_update(&pred, &pose, to_ms_since_boot(last_pose_t));
-        }
+        if (camera_get_pose(&pose)) { have_pose = true; fresh = true; last_pose_t = get_absolute_time(); }
         bool stale = !have_pose || absolute_time_diff_us(last_pose_t, get_absolute_time()) > POSE_TIMEOUT_MS * 1000;
 
         if (a_edge && st == ST_RUNNING) {
@@ -123,48 +97,28 @@ int main(void) {
                 why = "sin pose de la camara";
             } else {
 #if MODE_A
-                path_build_line(&tmp, pose.x_cm, pose.y_cm, pose.x_cm, pose.y_cm + A_DISTANCE_CM);
-                float he = path_start_heading_error(&tmp, &pose);
+                path_build_line(&path, pose.x_cm, pose.y_cm, pose.x_cm, pose.y_cm + A_DISTANCE_CM);
+                float he = path_start_heading_error(&path, &pose);
                 if (fabsf(he) > START_MAX_HEAD_DEG) why = "mal orientado (debe mirar a +y)";
-                else { ok = true; why = "listo"; }
+                else ok = true;
 #else
                 float d;
                 int k = path_nearest_wp(&pose, &d);
-                path_build_from(&tmp, k);
-                float he = path_start_heading_error(&tmp, &pose);
+                path_build_from(&path, k);
+                float he = path_start_heading_error(&path, &pose);
                 if (d > START_MAX_DIST_CM)               why = "lejos de un waypoint";
                 else if (fabsf(he) > START_MAX_HEAD_DEG) why = "mal orientado";
-                else { ok = true; start_wp = k; why = "listo"; }
+                else ok = true;
 #endif
             }
-            if (!ok) {
-                // LED amarillo sin USB: parpadeo lento = sin pose; rapido = hay pose pero no esta listo
-                uint32_t ms = to_ms_since_boot(get_absolute_time());
-                arming = false; yellow_led(stale ? (ms / 500) % 2 == 0 : (ms / 100) % 2 == 0);
-            } else if (!arming) {
-                arming = true; arm_t0 = get_absolute_time(); arm_ref = pose;
-#if MODE_A
-                printf("[ARMADO] modo A: avanza %.0f cm en +y; arranca en %d ms\n", (double)A_DISTANCE_CM, START_DELAY_MS);
-#else
-                printf("[ARMADO] salida en P%d; arranca en %d ms\n", WAYPOINTS[start_wp].id, START_DELAY_MS);
-#endif
+            if (ok) {
+                st = ST_RUNNING; run_start = get_absolute_time();
+                yellow_led(true);
+                printf("[INICIO] pose=(%.1f, %.1f, %.1f) puntos=%d\n",
+                       (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg, path.n);
             } else {
-                float moved = hypotf(pose.x_cm - arm_ref.x_cm, pose.y_cm - arm_ref.y_cm);
-                int64_t el_ms = absolute_time_diff_us(arm_t0, get_absolute_time()) / 1000;
-                yellow_led((el_ms / 250) % 2 == 0);
-                if (moved > START_STILL_CM) {
-                    arm_t0 = get_absolute_time(); arm_ref = pose;
-                } else if (el_ms >= START_DELAY_MS) {
-#if MODE_A
-                    path_build_line(&path, pose.x_cm, pose.y_cm, pose.x_cm, pose.y_cm + A_DISTANCE_CM);
-#else
-                    path_build_from(&path, start_wp);
-#endif
-                    st = ST_RUNNING; run_start = get_absolute_time(); arming = false;
-                    yellow_led(true);
-                    printf("[INICIO] pose=(%.1f, %.1f, %.1f) puntos=%d\n",
-                           (double)pose.x_cm, (double)pose.y_cm, (double)pose.theta_deg, path.n);
-                }
+                uint32_t ms = to_ms_since_boot(get_absolute_time());
+                yellow_led(stale ? (ms / 500) % 2 == 0 : (ms / 100) % 2 == 0);
             }
         }
 
@@ -172,11 +126,7 @@ int main(void) {
             if (stale) {
                 motors_out(0, 0);
             } else if (fresh) {
-                pose_t ctl = pose;
-#if LATENCY_COMP
-                pred_apply(&pred, &pose, camera_last_age_ms() + PIPELINE_MS, &ctl);
-#endif
-                path_follow(&path, &ctl, &cmd);
+                path_follow(&path, &pose, &cmd);
                 float t_s = absolute_time_diff_us(run_start, get_absolute_time()) / 1e6f;
                 for (int k = 0; k < WP_COUNT; k++) {
                     if (cmd.wp_new_reached & (1u << k))
