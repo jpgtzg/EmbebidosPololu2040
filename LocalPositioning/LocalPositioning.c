@@ -3,17 +3,22 @@
 #include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
 #include "vision_parcer.h"
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
+#include <sys/_pthreadtypes.h>
+
+#define MAX_TOKENS 128
+#define ROBOT_MARKER 13
 
 // Replace these with the network you want the Pico W to join.
 static const char *WIFI_SSID = "embedded";
 static const char *WIFI_PASSWORD = "12345678";
 static const uint16_t TELEMETRY_PORT = 5000;
 
-#define MAX_TOKENS 128
-
 static vision_packet_t latest_packet;
-static volatile bool packet_ready = false;
+static bool packet_ready = false;
+static jsmn_parser parser;
 
 static void on_udp_packet(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                           const ip_addr_t *addr, u16_t port) {
@@ -30,8 +35,6 @@ static void on_udp_packet(void *arg, struct udp_pcb *pcb, struct pbuf *p,
   pbuf_free(p);
 
   static jsmntok_t tokens[MAX_TOKENS];
-  jsmn_parser parser;
-  jsmn_init(&parser);
   int r = jsmn_parse(&parser, json, len, tokens, MAX_TOKENS);
   if (r < 1) {
     printf("JSON parse failed: %d\n", r);
@@ -48,9 +51,17 @@ static void on_udp_packet(void *arg, struct udp_pcb *pcb, struct pbuf *p,
   packet_ready = true;
 }
 
+static void process_packet() {
+  printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
+         latest_packet.board_detected, latest_packet.marker_count);
+
+  // send vision_packet_t via can
+}
+
 int main(void) {
   stdio_init_all();
 
+  jsmn_init(&parser);
   if (cyw43_arch_init()) {
     printf("Wi-Fi init failed\n");
     return -1;
@@ -74,13 +85,6 @@ int main(void) {
     cyw43_arch_poll();
     if (packet_ready) {
       packet_ready = false;
-      printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
-             latest_packet.board_detected, latest_packet.marker_count);
-      for (int i = 0; i < latest_packet.marker_count; i++) {
-        marker_t *m = &latest_packet.markers[i];
-        printf("  id=%d x=%.3f y=%.3f angle=%.1f\n", m->id, m->x, m->y,
-               m->angle);
-      }
     }
     cyw43_arch_wait_for_work_until(make_timeout_time_ms(1));
   }
