@@ -1,3 +1,7 @@
+// Written by Juan Pablo Gutierrez
+// Receives the upd packet from the machine, and sends it over CAN
+// No more processing is done here, as it is expected to be done in the Zumo
+
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 #include "mcp2515.h"
@@ -21,7 +25,6 @@
 #define FLAG_BOARD_DETECTED 0x01
 #define FLAG_MARKER_FOUND 0x02
 
-// Replace these with the network you want the Pico W to join.
 static const char *WIFI_SSID = "embedded";
 static const char *WIFI_PASSWORD = "12345678";
 static const uint16_t TELEMETRY_PORT = 5000;
@@ -120,12 +123,6 @@ static void send_packet_over_can(const vision_packet_t *p) {
     printf("CAN time TX failed\n");
 }
 
-static void process_packet() {
-  printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
-         latest_packet.board_detected, latest_packet.marker_count);
-  send_packet_over_can(&latest_packet);
-}
-
 int main(void) {
   stdio_init_all();
 
@@ -158,7 +155,9 @@ int main(void) {
     cyw43_arch_poll();
     if (packet_ready) {
       packet_ready = false;
-      process_packet();
+      printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
+             latest_packet.board_detected, latest_packet.marker_count);
+      send_packet_over_can(&latest_packet);
     }
     cyw43_arch_wait_for_work_until(make_timeout_time_ms(1));
   }
