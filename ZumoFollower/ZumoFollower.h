@@ -9,8 +9,8 @@ typedef struct {
   bool valid;             // at least one complete pose/time pair received
   bool board_detected;
   bool marker_found;      // false => x/y/angle are not meaningful
-  float x_mm;
-  float y_mm;
+  float x_m;
+  float y_m;
   float angle_deg;
   uint32_t timestamp_ms;  // epoch ms, low 32 bits
   uint8_t seq;

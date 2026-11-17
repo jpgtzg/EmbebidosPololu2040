@@ -33,6 +33,8 @@ project(ZumoFollower C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+add_subdirectory(../zumo-2040-robot/c/pololu_zumo_2040_robot pololu_zumo_2040_robot)
+
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(ZumoFollower ZumoFollower.c mcp2515.c)
@@ -47,7 +49,8 @@ pico_enable_stdio_usb(ZumoFollower 1)
 # Add the standard library to the build
 target_link_libraries(ZumoFollower
         pico_stdlib
-        hardware_spi)
+        hardware_spi
+        pololu_zumo_2040_robot)
 
 # Add the standard include files to the build
 target_include_directories(ZumoFollower PRIVATE
