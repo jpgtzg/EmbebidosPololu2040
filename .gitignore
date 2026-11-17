@@ -1,0 +1,5 @@
+# clangd index/cache
+.cache/
+
+# workspace-level editor settings
+/.vscode/
