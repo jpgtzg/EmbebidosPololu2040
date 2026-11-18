@@ -42,6 +42,8 @@ static void on_udp_packet(void *arg, struct udp_pcb *pcb, struct pbuf *p,
   if (p == NULL)
     return;
 
+  printf("%.*s\n", p->len, (char *)p->payload);
+
   static char json[512];
   u16_t len = pbuf_copy_partial(p, json, sizeof(json) - 1, 0);
   json[len] = '\0';
@@ -155,8 +157,8 @@ int main(void) {
     cyw43_arch_poll();
     if (packet_ready) {
       packet_ready = false;
-      printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
-             latest_packet.board_detected, latest_packet.marker_count);
+      // printf("t=%.3f detected=%d markers=%d\n", latest_packet.timestamp,
+      //        latest_packet.board_detected, latest_packet.marker_count);
       send_packet_over_can(&latest_packet);
     }
     cyw43_arch_wait_for_work_until(make_timeout_time_ms(1));

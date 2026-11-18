@@ -11,6 +11,7 @@
 #include "motors.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
+#include <math.h>
 
 #define CAN_ID_POSE 0x300
 #define CAN_ID_TIME 0x301
@@ -136,7 +137,14 @@ int main(void) {
 
       // this is only for the wireless positioning part
       double dif_cm = (state.y_m - first_state.y_m) * 100;
-      if (dif_cm < 50) {
+
+      // the loop runs every 5 ms, so only print once per new pose
+      static int last_printed_seq = -1;
+      if (state.seq != last_printed_seq) {
+        last_printed_seq = state.seq;
+        printf("dif_cm=%.1f\n", dif_cm);
+      }
+      if (fabs(dif_cm) < 50) {
         motors_set_speeds(2500, 2500);
       } else {
         motors_set_speeds(0, 0);
